@@ -15,7 +15,7 @@
 #include <opencv2/highgui/highgui.hpp>
  //Kinect DK
 #include <k4a/k4a.hpp>
-
+#include <set>
 // PCL 库
 #include <pcl/io/pcd_io.h>
 #include <pcl/io/ply_io.h>
@@ -34,6 +34,21 @@ typedef pcl::PointCloud<PointT> PointCloud;
 
 using namespace cv;
 using namespace std;
+
+
+std::set<int> getPixelIndicesInROI(const cv::Mat& image, const cv::Rect& roi) {
+    std::set<int> indices;
+    for (int x = roi.x; x < roi.x + roi.width; ++x){
+        for (int y = roi.y; y < roi.y + roi.height; ++y){
+            // 确保索引在图像尺寸范围内
+            if (x >= 0 && y >= 0 && x < image.cols && y < image.rows) {
+                indices.insert(x+ image.cols *y);
+            }
+        }
+    }
+    return indices;
+}
+
 
 PointT point;
 PointT point_center;
@@ -135,6 +150,20 @@ int main(int argc, char* argv[]) {
     std::cout << "-----------------------------------" << std::endl;
     std::cout << "----- Have Started Kinect DK. -----" << std::endl;
     std::cout << "-----------------------------------" << std::endl;
+
+    // 随机指定一个目标框,用于切割出点云（x,y,w,h）
+    cv::Rect object1(451, 123, 210, 290);
+    // 计算出中心点坐标
+    float center_x = object1.x + object1.width / 2.0;
+    float center_y = object1.y + object1.height / 2.0;
+    int size_x = object1.width;
+    int size_y = object1.height;
+
+    // 目标框不行，必须用分割算法
+    // 找出person的颜色区域
+   
+    
+
     // 从设备获取捕获
     k4a::image rgbImage;
     k4a::image depthImage;
@@ -146,13 +175,7 @@ int main(int argc, char* argv[]) {
     cv::Mat cv_depth;
     cv::Mat cv_depth_8U;
 
-    // 随机指定一个目标框,用于切割出点云（x,y,w,h）
-    cv::Rect object1(448,388,197,264);
-    // 计算出中心点坐标
-    int center_x = int(object1.x + object1.width / 2);
-    int center_y = int(object1.y + object1.height / 2);
-    int size_x = object1.width;
-    int size_y = object1.height;
+    float box_z = 0;
     
 
     int index = 0;
@@ -173,7 +196,6 @@ int main(int argc, char* argv[]) {
             uint8_t* color_buffer = rgbImage.get_buffer(); // 获取颜色图像数据的指针
             int width = rgbImage.get_width_pixels();
             int height = rgbImage.get_height_pixels();
-            std::cout << "width: " << std::endl;
 
             for (int i = 0; i < 10; i++) // 只打印前10个像素
             {
@@ -187,6 +209,8 @@ int main(int argc, char* argv[]) {
             cv::Mat cv_rgbImage_with_alpha = cv::Mat(height, width, CV_8UC4, color_buffer, cv::Mat::AUTO_STEP);
             cv::Mat cv_image_no_alpha;
             cv::cvtColor(cv_rgbImage_with_alpha, cv_image_no_alpha, cv::COLOR_BGRA2BGR);
+
+            std::set<int> roi_indices = getPixelIndicesInROI(cv_image_no_alpha, object1);
             cv::imwrite("a.jpg", cv_image_no_alpha);
             cv::imshow("color", cv_image_no_alpha);
             cv::waitKey(1);
@@ -242,40 +266,28 @@ int main(int argc, char* argv[]) {
             const uint8_t* color_image_data = rgbImage.get_buffer();
 
 
-            //// 创建一个 PCLVisualizer 对象
-            pcl::visualization::PCLVisualizer viewer("3D Viewer");
 
 
-            //// 创建表示框的模型系数
-            pcl::ModelCoefficients coefficients;
-            coefficients.values.resize(6); // 6个值分别表示 x_min, x_max, y_min, y_max, z_min, z_max
+            std::set<float> object_pointx_list;
+            std::set<float> object_pointy_list;
+            std::set<float> object_pointz_list;
 
             for (int i = 0; i < color_image_width_pixels * color_image_height_pixels; i++) {
-
-                if (i == center_x + object1.width * center_y) {
-                    point_center.x = point_cloud_image_data[3 * i + 0] / 1000.0f;
-                    point_center.y = point_cloud_image_data[3 * i + 1] / 1000.0f;
-                    point_center.z = point_cloud_image_data[3 * i + 2] / 1000.0f;
-                    std::cout << "point_center.x:" << point_center.x << "  point_center.y: "<< point_center.y<<"  point_center.z: " <<point_center.z << std::endl;
-                    float D = point_center.z;
-                    std::cout << "D * (size_x / fx);" << D * (size_x / fx) << std::endl;
-                    float W = D * (size_x / fx);
-                    float H = D * (size_y / fy);
-                    std::cout << "W:  " << W << "H: " << H << "D: " << D << std::endl;
-                    //// 定义框的最大和最小坐标
-                    coefficients.values[0] = -(point_center.x + W / 2);  // x_min
-                    coefficients.values[1] = -(point_center.x - W / 2);  // x_max
-                    coefficients.values[2] = (point_center.y - H/2);  // y_min
-                    coefficients.values[3] = (point_center.y + H/2);  // y_max
-                    std::cout << "y_min: " << coefficients.values[2] << "y_max: " << coefficients.values[3] << std::endl;
-                    coefficients.values[4] = -point_center.z-0.5 ;  // z_min
-                    coefficients.values[5] = -point_center.z  ;  // z_max
-
-
+                
+                
+                if (roi_indices.count(i) > 0) {
+                    object_pointx_list.insert(point_cloud_image_data[3 * i + 0] / 1000.0f);
+                    object_pointy_list.insert(point_cloud_image_data[3 * i + 1] / 1000.0f);
+                    object_pointz_list.insert(point_cloud_image_data[3 * i + 2] / 1000.0f);
+                    if(i == int(center_x + center_y * width)){
+                        box_z = point_cloud_image_data[3 * i + 2] / 1000.0f;
+                        std::cout << "ddddd" <<box_z<< std::endl;
+                    }
                 }
-                point.x = -point_cloud_image_data[3 * i + 0] / 1000.0f;
-                point.y = -point_cloud_image_data[3 * i + 1] / 1000.0f;
-                point.z = -point_cloud_image_data[3 * i + 2] / 1000.0f;
+                
+                point.x = point_cloud_image_data[3 * i + 0] / 1000.0f;
+                point.y = point_cloud_image_data[3 * i + 1] / 1000.0f;
+                point.z = point_cloud_image_data[3 * i + 2] / 1000.0f;
 
                 point.b = color_image_data[4 * i + 0];
                 point.g = color_image_data[4 * i + 1];
@@ -296,9 +308,25 @@ int main(int argc, char* argv[]) {
 
 
 
+            //// 创建一个 PCLVisualizer 对象
+            pcl::visualization::PCLVisualizer viewer("3D Viewer");
+            //// 创建表示框的模型系数
+            pcl::ModelCoefficients coefficients;
+            coefficients.values.resize(6); // 6个值分别表示 x_min, x_max, y_min, y_max, z_min, z_max
 
 
-            
+            //// 定义框的最大和最小坐标
+            coefficients.values[0] = *object_pointx_list.begin();  // x_min
+            coefficients.values[1] = *object_pointx_list.rbegin();  // x_max
+            coefficients.values[2] = *object_pointy_list.begin();  // y_min
+            coefficients.values[3] = *object_pointy_list.rbegin();  // y_max
+            // 暂时用固定的
+            coefficients.values[4] = box_z-0.2;  // z_min
+            coefficients.values[5] = box_z+0.1;  // z_max
+            std::cout << "x_min: " << coefficients.values[0] << "x_max: " << coefficients.values[1] << std::endl;
+
+            std::cout << "y_min: " << coefficients.values[2] << "y_max: " << coefficients.values[3] << std::endl;
+            std::cout << "z_min: " << coefficients.values[4] << "z_max: " << coefficients.values[5] << std::endl;
 
             pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> rgb(cloud);
 
